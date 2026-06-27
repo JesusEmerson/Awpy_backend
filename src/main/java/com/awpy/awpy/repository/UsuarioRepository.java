@@ -9,6 +9,8 @@ public interface UsuarioRepository extends JpaRepository<Usuario, Long> {
 
     Optional<Usuario> findByEmail(String email);
 
+    Optional<Usuario> findByQrCodeUsuario(String qrCodeUsuario);
+
     boolean existsByEmail(String email);
 
     boolean existsByCpfCnpj(String cpfCnpj);

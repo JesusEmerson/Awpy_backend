@@ -51,4 +51,12 @@ public class Usuario {
     private Long saldoPontos = 0L;
 
     private String fotoUrl;
+
+    /**
+     * QR Code do usuário, diferente do QR Code do cupom (Cupom.qrCodeUnico).
+     * Fica fixo desde o cadastro — exibido na Home, nunca usado pelo fluxo de
+     * resgate/confirmação (esse é só do cupom).
+     */
+    @Column(nullable = false, unique = true)
+    private String qrCodeUsuario;
 }

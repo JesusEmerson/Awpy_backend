@@ -30,6 +30,11 @@ public class BeneficioController {
         return beneficioService.listarAtivos();
     }
 
+    @GetMapping("/todos")
+    public List<BeneficioResponse> listarTodos() {
+        return beneficioService.listarTodos();
+    }
+
     @PostMapping
     public ResponseEntity<BeneficioResponse> cadastrar(@Valid @RequestBody BeneficioCadastroRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(beneficioService.cadastrar(request));

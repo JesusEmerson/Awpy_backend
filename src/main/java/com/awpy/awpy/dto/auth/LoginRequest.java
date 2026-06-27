@@ -1,8 +1,8 @@
-package com.awpy.awpy.dto.usuario;
+package com.awpy.awpy.dto.auth;
 
 import jakarta.validation.constraints.NotBlank;
 
-public record UsuarioLoginRequest(
+public record LoginRequest(
         @NotBlank(message = "e-mail é obrigatório")
         String email,
 

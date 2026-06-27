@@ -19,7 +19,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.access.AccessDeniedException;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -34,10 +33,10 @@ import static org.mockito.Mockito.when;
 
 /**
  * Testes da regra de negócio mais sensível do projeto: quem pode resgatar, ver e
- * confirmar/cancelar um cupom. Cobrem tanto as regras descritas no PDF (saldo,
- * benefício ativo, 1 cupom ativo por vez, expiração, já utilizado) quanto a
- * correção de IDOR (o id da URL não pode ser aceito sem checar contra o e-mail
- * autenticado).
+ * confirmar/cancelar um cupom. A identidade é sempre o e-mail autenticado (não há
+ * id de path) — não existe IDOR possível por construção, então não há mais um
+ * cenário de "usuário tentando acessar outro id" pra testar aqui: o serviço nem
+ * aceita um id de outra pessoa, só resolve "quem está logado".
  */
 @ExtendWith(MockitoExtension.class)
 class CupomServiceTest {
@@ -87,23 +86,23 @@ class CupomServiceTest {
 
     @Test
     void resgatarComSucessoQuandoTudoValido() {
-        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
+        when(usuarioRepository.findByEmail("usuario@teste.com")).thenReturn(Optional.of(usuario));
         when(beneficioRepository.findById(1L)).thenReturn(Optional.of(beneficio));
-        when(cupomRepository.existsByUsuarioAndStatus(usuario, StatusCupom.ATIVO)).thenReturn(false);
+        when(cupomRepository.countByUsuarioAndStatus(usuario, StatusCupom.ATIVO)).thenReturn(0L);
         when(cupomRepository.save(any(Cupom.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        CupomResponse response = cupomService.resgatar(1L, 1L, "usuario@teste.com");
+        CupomResponse response = cupomService.resgatar("usuario@teste.com", 1L);
 
         assertThat(response.status()).isEqualTo(StatusCupom.ATIVO);
         assertThat(response.beneficioNome()).isEqualTo("Café grátis");
     }
 
     @Test
-    void resgatarFalhaSeUsuarioAutenticadoNaoForOTitularDoId() {
-        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
+    void resgatarFalhaSeUsuarioAutenticadoNaoExiste() {
+        when(usuarioRepository.findByEmail("fantasma@teste.com")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> cupomService.resgatar(1L, 1L, "outra-pessoa@teste.com"))
-                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> cupomService.resgatar("fantasma@teste.com", 1L))
+                .isInstanceOf(RecursoNaoEncontradoException.class);
 
         verify(cupomRepository, never()).save(any());
     }
@@ -111,10 +110,10 @@ class CupomServiceTest {
     @Test
     void resgatarFalhaSeBeneficioInativo() {
         beneficio.setAtivo(false);
-        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
+        when(usuarioRepository.findByEmail("usuario@teste.com")).thenReturn(Optional.of(usuario));
         when(beneficioRepository.findById(1L)).thenReturn(Optional.of(beneficio));
 
-        assertThatThrownBy(() -> cupomService.resgatar(1L, 1L, "usuario@teste.com"))
+        assertThatThrownBy(() -> cupomService.resgatar("usuario@teste.com", 1L))
                 .isInstanceOf(RegraNegocioException.class)
                 .hasMessageContaining("indisponível");
     }
@@ -122,52 +121,54 @@ class CupomServiceTest {
     @Test
     void resgatarFalhaSeSaldoInsuficiente() {
         usuario.setSaldoPontos(50L);
-        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
+        when(usuarioRepository.findByEmail("usuario@teste.com")).thenReturn(Optional.of(usuario));
         when(beneficioRepository.findById(1L)).thenReturn(Optional.of(beneficio));
 
-        assertThatThrownBy(() -> cupomService.resgatar(1L, 1L, "usuario@teste.com"))
+        assertThatThrownBy(() -> cupomService.resgatar("usuario@teste.com", 1L))
                 .isInstanceOf(RegraNegocioException.class)
                 .hasMessageContaining("saldo");
     }
 
     @Test
-    void resgatarFalhaSeJaExisteCupomAtivo() {
-        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
+    void resgatarFalhaSeJaAtingiuLimiteDeCuponsAtivos() {
+        when(usuarioRepository.findByEmail("usuario@teste.com")).thenReturn(Optional.of(usuario));
         when(beneficioRepository.findById(1L)).thenReturn(Optional.of(beneficio));
-        when(cupomRepository.existsByUsuarioAndStatus(usuario, StatusCupom.ATIVO)).thenReturn(true);
+        when(cupomRepository.countByUsuarioAndStatus(usuario, StatusCupom.ATIVO)).thenReturn(3L);
 
-        assertThatThrownBy(() -> cupomService.resgatar(1L, 1L, "usuario@teste.com"))
+        assertThatThrownBy(() -> cupomService.resgatar("usuario@teste.com", 1L))
                 .isInstanceOf(RegraNegocioException.class)
-                .hasMessageContaining("já possui um cupom ativo");
+                .hasMessageContaining("limite");
     }
 
-    // ---------- buscarCupomAtivo ----------
+    // ---------- buscarCuponsAtivos ----------
 
     @Test
-    void buscarCupomAtivoFalhaSeUsuarioAutenticadoNaoForOTitular() {
-        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
+    void buscarCuponsAtivosRetornaListaVaziaQuandoNaoHaNenhumAtivo() {
+        when(usuarioRepository.findByEmail("usuario@teste.com")).thenReturn(Optional.of(usuario));
+        when(cupomRepository.findByUsuarioAndStatus(usuario, StatusCupom.ATIVO)).thenReturn(java.util.List.of());
 
-        assertThatThrownBy(() -> cupomService.buscarCupomAtivo(1L, "outra-pessoa@teste.com"))
-                .isInstanceOf(AccessDeniedException.class);
+        assertThat(cupomService.buscarCuponsAtivos("usuario@teste.com")).isEmpty();
     }
 
     @Test
-    void buscarCupomAtivoRetorna404QuandoNaoHaCupomAtivo() {
-        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuario));
-        when(cupomRepository.findByUsuarioAndStatus(usuario, StatusCupom.ATIVO)).thenReturn(Optional.empty());
+    void buscarCuponsAtivosRetornaTodosOsCuponsAtivosDoUsuario() {
+        Cupom cupom1 = cupomAtivo(parceiro);
+        Cupom cupom2 = cupomAtivo(parceiro);
+        when(usuarioRepository.findByEmail("usuario@teste.com")).thenReturn(Optional.of(usuario));
+        when(cupomRepository.findByUsuarioAndStatus(usuario, StatusCupom.ATIVO))
+                .thenReturn(java.util.List.of(cupom1, cupom2));
 
-        assertThatThrownBy(() -> cupomService.buscarCupomAtivo(1L, "usuario@teste.com"))
-                .isInstanceOf(RecursoNaoEncontradoException.class);
+        assertThat(cupomService.buscarCuponsAtivos("usuario@teste.com")).hasSize(2);
     }
 
     // ---------- validação do parceiro (scanner) ----------
 
     @Test
-    void buscarParaValidacaoFalhaSeParceiroAutenticadoNaoForOTitularDoId() {
-        when(parceiroRepository.findById(1L)).thenReturn(Optional.of(parceiro));
+    void buscarParaValidacaoFalhaSeParceiroAutenticadoNaoExiste() {
+        when(parceiroRepository.findByEmail("fantasma@teste.com")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> cupomService.buscarParaValidacao(1L, "qr-123", "outro-parceiro@teste.com"))
-                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> cupomService.buscarParaValidacao("fantasma@teste.com", "qr-123"))
+                .isInstanceOf(RecursoNaoEncontradoException.class);
     }
 
     @Test
@@ -175,10 +176,10 @@ class CupomServiceTest {
         Parceiro outroParceiro = Parceiro.builder().id(2L).email("outro@teste.com").build();
         Cupom cupom = cupomAtivo(outroParceiro);
 
-        when(parceiroRepository.findById(1L)).thenReturn(Optional.of(parceiro));
+        when(parceiroRepository.findByEmail("parceiro@teste.com")).thenReturn(Optional.of(parceiro));
         when(cupomRepository.findByQrCodeUnico("qr-123")).thenReturn(Optional.of(cupom));
 
-        assertThatThrownBy(() -> cupomService.buscarParaValidacao(1L, "qr-123", "parceiro@teste.com"))
+        assertThatThrownBy(() -> cupomService.buscarParaValidacao("parceiro@teste.com", "qr-123"))
                 .isInstanceOf(RegraNegocioException.class)
                 .hasMessageContaining("não pertence ao parceiro");
     }
@@ -188,10 +189,10 @@ class CupomServiceTest {
         Cupom cupom = cupomAtivo(parceiro);
         cupom.setStatus(StatusCupom.UTILIZADO);
 
-        when(parceiroRepository.findById(1L)).thenReturn(Optional.of(parceiro));
+        when(parceiroRepository.findByEmail("parceiro@teste.com")).thenReturn(Optional.of(parceiro));
         when(cupomRepository.findByQrCodeUnico("qr-123")).thenReturn(Optional.of(cupom));
 
-        assertThatThrownBy(() -> cupomService.buscarParaValidacao(1L, "qr-123", "parceiro@teste.com"))
+        assertThatThrownBy(() -> cupomService.buscarParaValidacao("parceiro@teste.com", "qr-123"))
                 .isInstanceOf(RegraNegocioException.class)
                 .hasMessageContaining("já utilizado");
     }
@@ -201,11 +202,11 @@ class CupomServiceTest {
         Cupom cupom = cupomAtivo(parceiro);
         cupom.setDataExpiracao(LocalDateTime.now().minusDays(1));
 
-        when(parceiroRepository.findById(1L)).thenReturn(Optional.of(parceiro));
+        when(parceiroRepository.findByEmail("parceiro@teste.com")).thenReturn(Optional.of(parceiro));
         when(cupomRepository.findByQrCodeUnico("qr-123")).thenReturn(Optional.of(cupom));
         lenient().when(cupomRepository.save(any(Cupom.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        assertThatThrownBy(() -> cupomService.buscarParaValidacao(1L, "qr-123", "parceiro@teste.com"))
+        assertThatThrownBy(() -> cupomService.buscarParaValidacao("parceiro@teste.com", "qr-123"))
                 .isInstanceOf(RegraNegocioException.class)
                 .hasMessageContaining("expirado");
     }
@@ -216,11 +217,11 @@ class CupomServiceTest {
     void confirmarUsoDebitaPontosEMudaStatusParaUtilizado() {
         Cupom cupom = cupomAtivo(parceiro);
 
-        when(parceiroRepository.findById(1L)).thenReturn(Optional.of(parceiro));
+        when(parceiroRepository.findByEmail("parceiro@teste.com")).thenReturn(Optional.of(parceiro));
         when(cupomRepository.findByQrCodeUnico("qr-123")).thenReturn(Optional.of(cupom));
         when(cupomRepository.save(any(Cupom.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        CardValidacaoResponse response = cupomService.confirmarUso(1L, "qr-123", "parceiro@teste.com");
+        CardValidacaoResponse response = cupomService.confirmarUso("parceiro@teste.com", "qr-123");
 
         assertThat(response.status()).isEqualTo(StatusCupom.UTILIZADO);
         assertThat(usuario.getSaldoPontos()).isEqualTo(50L);
@@ -228,11 +229,11 @@ class CupomServiceTest {
     }
 
     @Test
-    void confirmarUsoFalhaSeParceiroAutenticadoNaoForOTitularDoId() {
-        when(parceiroRepository.findById(1L)).thenReturn(Optional.of(parceiro));
+    void confirmarUsoFalhaSeParceiroAutenticadoNaoExiste() {
+        when(parceiroRepository.findByEmail("fantasma@teste.com")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> cupomService.confirmarUso(1L, "qr-123", "outro-parceiro@teste.com"))
-                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> cupomService.confirmarUso("fantasma@teste.com", "qr-123"))
+                .isInstanceOf(RecursoNaoEncontradoException.class);
 
         verify(cupomRepository, never()).findByQrCodeUnico(any());
         verify(usuarioRepository, never()).save(any());
@@ -244,10 +245,10 @@ class CupomServiceTest {
     void cancelarNaoAlteraSaldoNemStatusDoCupom() {
         Cupom cupom = cupomAtivo(parceiro);
 
-        when(parceiroRepository.findById(1L)).thenReturn(Optional.of(parceiro));
+        when(parceiroRepository.findByEmail("parceiro@teste.com")).thenReturn(Optional.of(parceiro));
         when(cupomRepository.findByQrCodeUnico("qr-123")).thenReturn(Optional.of(cupom));
 
-        CardValidacaoResponse response = cupomService.cancelar(1L, "qr-123", "parceiro@teste.com");
+        CardValidacaoResponse response = cupomService.cancelar("parceiro@teste.com", "qr-123");
 
         assertThat(response.status()).isEqualTo(StatusCupom.ATIVO);
         assertThat(usuario.getSaldoPontos()).isEqualTo(150L);

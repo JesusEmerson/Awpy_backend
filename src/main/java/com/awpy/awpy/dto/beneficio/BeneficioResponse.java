@@ -7,6 +7,10 @@ public record BeneficioResponse(
         String nome,
         String descricao,
         Long custoEmPontos,
+        Boolean ativo,
+        Double percentualDesconto,
+        Double percentualCashback,
+        Long parceiroId,
         String parceiroNome
 ) {
     public static BeneficioResponse fromEntity(Beneficio beneficio) {
@@ -15,6 +19,10 @@ public record BeneficioResponse(
                 beneficio.getNome(),
                 beneficio.getDescricao(),
                 beneficio.getCustoEmPontos(),
+                beneficio.getAtivo(),
+                beneficio.getPercentualDesconto(),
+                beneficio.getPercentualCashback(),
+                beneficio.getParceiro().getId(),
                 beneficio.getParceiro().getNomeEstabelecimento()
         );
     }

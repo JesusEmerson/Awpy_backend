@@ -76,6 +76,7 @@ class HistoricoPontosRepositoryTest {
                 .endereco("Rua A")
                 .cep("12345678")
                 .saldoPontos(0L)
+                .qrCodeUsuario(java.util.UUID.randomUUID().toString())
                 .build();
     }
 

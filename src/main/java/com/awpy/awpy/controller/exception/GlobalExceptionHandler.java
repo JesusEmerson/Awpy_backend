@@ -22,28 +22,29 @@ public class GlobalExceptionHandler {
                 .toList();
 
         ApiErrorResponse body = new ApiErrorResponse(
-                LocalDateTime.now(), HttpStatus.BAD_REQUEST.value(), "dados inválidos", erros);
+                LocalDateTime.now(), HttpStatus.BAD_REQUEST.value(), "dados inválidos", null, erros);
         return ResponseEntity.badRequest().body(body);
     }
 
     @ExceptionHandler(RegraNegocioException.class)
     public ResponseEntity<ApiErrorResponse> handleRegraNegocio(RegraNegocioException ex) {
         ApiErrorResponse body = new ApiErrorResponse(
-                LocalDateTime.now(), HttpStatus.CONFLICT.value(), ex.getMessage(), List.of());
+                LocalDateTime.now(), HttpStatus.CONFLICT.value(), ex.getMessage(), ex.getCodigo(), List.of());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     @ExceptionHandler(RecursoNaoEncontradoException.class)
     public ResponseEntity<ApiErrorResponse> handleRecursoNaoEncontrado(RecursoNaoEncontradoException ex) {
         ApiErrorResponse body = new ApiErrorResponse(
-                LocalDateTime.now(), HttpStatus.NOT_FOUND.value(), ex.getMessage(), List.of());
+                LocalDateTime.now(), HttpStatus.NOT_FOUND.value(), ex.getMessage(), null, List.of());
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
     }
 
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<ApiErrorResponse> handleCredenciaisInvalidas(BadCredentialsException ex) {
         ApiErrorResponse body = new ApiErrorResponse(
-                LocalDateTime.now(), HttpStatus.UNAUTHORIZED.value(), "e-mail ou senha inválidos", List.of());
+                LocalDateTime.now(), HttpStatus.UNAUTHORIZED.value(), "e-mail ou senha inválidos",
+                "CREDENCIAIS_INVALIDAS", List.of());
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(body);
     }
 }

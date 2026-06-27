@@ -37,7 +37,7 @@ class RealServerAuthorizationTest {
 
         // ROLE_USUARIO tentando acessar endpoint exclusivo de PARCEIRO
         var response = restTemplate.exchange(
-                "/api/parceiros/1/cupons/qualquer-qr",
+                "/api/parceiros/me/cupons/qualquer-qr",
                 org.springframework.http.HttpMethod.GET,
                 new HttpEntity<>(headers),
                 String.class);
@@ -78,7 +78,7 @@ class RealServerAuthorizationTest {
         headers.setContentType(MediaType.APPLICATION_JSON);
         String body = "{\"email\":\"%s\",\"senha\":\"senha1234\"}".formatted(email);
 
-        var response = restTemplate.postForEntity("/api/usuarios/login", new HttpEntity<>(body, headers), String.class);
+        var response = restTemplate.postForEntity("/api/auth/login", new HttpEntity<>(body, headers), String.class);
         org.assertj.core.api.Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 
         String json = response.getBody();

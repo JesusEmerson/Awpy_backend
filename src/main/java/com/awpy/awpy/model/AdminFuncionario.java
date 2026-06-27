@@ -44,4 +44,6 @@ public class AdminFuncionario {
     @Column(nullable = false)
     @Builder.Default
     private Boolean ativo = true;
+
+    private String fotoUrl;
 }

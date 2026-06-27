@@ -7,10 +7,11 @@ public record AdminFuncionarioResponse(
         Long id,
         String nomeCompleto,
         String email,
-        NivelPermissao nivelPermissao
+        NivelPermissao nivelPermissao,
+        String fotoUrl
 ) {
     public static AdminFuncionarioResponse fromEntity(AdminFuncionario admin) {
         return new AdminFuncionarioResponse(
-                admin.getId(), admin.getNomeCompleto(), admin.getEmail(), admin.getNivelPermissao());
+                admin.getId(), admin.getNomeCompleto(), admin.getEmail(), admin.getNivelPermissao(), admin.getFotoUrl());
     }
 }

@@ -29,10 +29,19 @@ public class Parceiro {
     private String nomeEstabelecimento;
 
     @Column(nullable = false, unique = true)
+    private String cnpj;
+
+    @Column(nullable = false, unique = true)
     private String email;
 
     @Column(nullable = false)
     private String senha;
+
+    @Column(nullable = false)
+    private String telefone;
+
+    @Column(nullable = false)
+    private String endereco;
 
     @Column(nullable = false)
     @Builder.Default

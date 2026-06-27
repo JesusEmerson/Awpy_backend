@@ -14,18 +14,26 @@ import com.awpy.awpy.repository.UsuarioRepository;
 import com.awpy.awpy.service.exception.RecursoNaoEncontradoException;
 import com.awpy.awpy.service.exception.RegraNegocioException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
+/**
+ * Todas as operações aqui derivam o usuário/parceiro do e-mail autenticado (token),
+ * nunca de um id vindo do cliente — não existe rota "/usuarios/{id}/cupons", só
+ * "/usuarios/me/cupons" (ver UsuarioController/ParceiroCupomController). Isso evita
+ * IDOR por construção e também poupa o app de ter que guardar o próprio id numérico
+ * só para montar URLs.
+ */
 @Service
 @RequiredArgsConstructor
 public class CupomService {
 
     private static final int VALIDADE_EM_DIAS = 30;
+    private static final int LIMITE_CUPONS_ATIVOS = 3;
 
     private final UsuarioRepository usuarioRepository;
     private final BeneficioRepository beneficioRepository;
@@ -33,22 +41,24 @@ public class CupomService {
     private final ParceiroRepository parceiroRepository;
 
     @Transactional
-    public CupomResponse resgatar(Long usuarioId, Long beneficioId, String emailAutenticado) {
-        Usuario usuario = carregarUsuarioAutenticado(usuarioId, emailAutenticado);
+    public CupomResponse resgatar(String emailAutenticado, Long beneficioId) {
+        Usuario usuario = carregarUsuarioPorEmail(emailAutenticado);
 
         Beneficio beneficio = beneficioRepository.findById(beneficioId)
                 .orElseThrow(() -> new RecursoNaoEncontradoException("benefício não encontrado"));
 
         if (!beneficio.getAtivo()) {
-            throw new RegraNegocioException("benefício indisponível");
+            throw new RegraNegocioException("benefício indisponível", "BENEFICIO_INDISPONIVEL");
         }
 
         if (usuario.getSaldoPontos() < beneficio.getCustoEmPontos()) {
-            throw new RegraNegocioException("saldo de pontos insuficiente");
+            throw new RegraNegocioException("saldo de pontos insuficiente", "SALDO_INSUFICIENTE");
         }
 
-        if (cupomRepository.existsByUsuarioAndStatus(usuario, StatusCupom.ATIVO)) {
-            throw new RegraNegocioException("usuário já possui um cupom ativo");
+        if (cupomRepository.countByUsuarioAndStatus(usuario, StatusCupom.ATIVO) >= LIMITE_CUPONS_ATIVOS) {
+            throw new RegraNegocioException(
+                    "usuário já atingiu o limite de " + LIMITE_CUPONS_ATIVOS + " cupons ativos",
+                    "LIMITE_CUPONS_ATIVOS_ATINGIDO");
         }
 
         LocalDateTime agora = LocalDateTime.now();
@@ -65,25 +75,39 @@ public class CupomService {
         return CupomResponse.fromEntity(cupomRepository.save(cupom));
     }
 
-    public CupomResponse buscarCupomAtivo(Long usuarioId, String emailAutenticado) {
-        Usuario usuario = carregarUsuarioAutenticado(usuarioId, emailAutenticado);
+    /** Até LIMITE_CUPONS_ATIVOS itens — lista vazia se não houver nenhum (nunca 404). */
+    @Transactional
+    public List<CupomResponse> buscarCuponsAtivos(String emailAutenticado) {
+        Usuario usuario = carregarUsuarioPorEmail(emailAutenticado);
 
-        Cupom cupom = cupomRepository.findByUsuarioAndStatus(usuario, StatusCupom.ATIVO)
-                .orElseThrow(() -> new RecursoNaoEncontradoException("usuário não possui cupom ativo"));
+        List<Cupom> cupons = cupomRepository.findByUsuarioAndStatus(usuario, StatusCupom.ATIVO);
+        cupons.forEach(this::expirarSeNecessario);
 
-        expirarSeNecessario(cupom);
-        return CupomResponse.fromEntity(cupom);
+        return cupons.stream()
+                .filter(cupom -> cupom.getStatus() == StatusCupom.ATIVO)
+                .map(CupomResponse::fromEntity)
+                .toList();
+    }
+
+    /** Histórico completo (ativo + utilizados + expirados), mais recente primeiro. */
+    @Transactional
+    public List<CupomResponse> listarTodos(String emailAutenticado) {
+        Usuario usuario = carregarUsuarioPorEmail(emailAutenticado);
+
+        List<Cupom> cupons = cupomRepository.findByUsuarioOrderByDataGeracaoDesc(usuario);
+        cupons.forEach(this::expirarSeNecessario);
+
+        return cupons.stream().map(CupomResponse::fromEntity).toList();
     }
 
     @Transactional
-    public CardValidacaoResponse buscarParaValidacao(Long parceiroId, String qrCodeUnico, String emailAutenticado) {
-        return CardValidacaoResponse.fromEntity(
-                buscarCupomValidoDoParceiro(parceiroId, qrCodeUnico, emailAutenticado));
+    public CardValidacaoResponse buscarParaValidacao(String emailAutenticado, String qrCodeUnico) {
+        return CardValidacaoResponse.fromEntity(buscarCupomValidoDoParceiro(emailAutenticado, qrCodeUnico));
     }
 
     @Transactional
-    public CardValidacaoResponse confirmarUso(Long parceiroId, String qrCodeUnico, String emailAutenticado) {
-        Cupom cupom = buscarCupomValidoDoParceiro(parceiroId, qrCodeUnico, emailAutenticado);
+    public CardValidacaoResponse confirmarUso(String emailAutenticado, String qrCodeUnico) {
+        Cupom cupom = buscarCupomValidoDoParceiro(emailAutenticado, qrCodeUnico);
 
         Usuario usuario = cupom.getUsuario();
         usuario.setSaldoPontos(usuario.getSaldoPontos() - cupom.getBeneficio().getCustoEmPontos());
@@ -97,46 +121,25 @@ public class CupomService {
     }
 
     @Transactional
-    public CardValidacaoResponse cancelar(Long parceiroId, String qrCodeUnico, String emailAutenticado) {
+    public CardValidacaoResponse cancelar(String emailAutenticado, String qrCodeUnico) {
         // Cancelar não altera o cupom: ele permanece ATIVO (se ainda válido) e nenhum
         // ponto é baixado. A validação abaixo apenas garante que o parceiro tem
         // permissão para "ver" esse cupom antes de descartar a leitura.
-        return CardValidacaoResponse.fromEntity(
-                buscarCupomValidoDoParceiro(parceiroId, qrCodeUnico, emailAutenticado));
+        return CardValidacaoResponse.fromEntity(buscarCupomValidoDoParceiro(emailAutenticado, qrCodeUnico));
     }
 
-    /**
-     * O id na URL (/api/usuarios/{usuarioId}/...) vem do cliente e não pode ser
-     * confiável por si só — sem essa checagem, qualquer usuário autenticado poderia
-     * trocar o id no path e operar cupons de outra pessoa (IDOR). Por isso a
-     * identidade real sempre vem do principal autenticado (e-mail do Basic Auth),
-     * e o id do path só é aceito se pertencer a esse mesmo principal.
-     */
-    private Usuario carregarUsuarioAutenticado(Long usuarioId, String emailAutenticado) {
-        Usuario usuario = usuarioRepository.findById(usuarioId)
+    private Usuario carregarUsuarioPorEmail(String emailAutenticado) {
+        return usuarioRepository.findByEmail(emailAutenticado)
                 .orElseThrow(() -> new RecursoNaoEncontradoException("usuário não encontrado"));
-
-        if (!usuario.getEmail().equalsIgnoreCase(emailAutenticado)) {
-            throw new AccessDeniedException("usuário só pode acessar os próprios cupons");
-        }
-
-        return usuario;
     }
 
-    /** Mesma razão de carregarUsuarioAutenticado, mas para o lado do parceiro. */
-    private Parceiro carregarParceiroAutenticado(Long parceiroId, String emailAutenticado) {
-        Parceiro parceiro = parceiroRepository.findById(parceiroId)
+    private Parceiro carregarParceiroPorEmail(String emailAutenticado) {
+        return parceiroRepository.findByEmail(emailAutenticado)
                 .orElseThrow(() -> new RecursoNaoEncontradoException("parceiro não encontrado"));
-
-        if (!parceiro.getEmail().equalsIgnoreCase(emailAutenticado)) {
-            throw new AccessDeniedException("parceiro só pode validar cupons do próprio estabelecimento");
-        }
-
-        return parceiro;
     }
 
-    private Cupom buscarCupomValidoDoParceiro(Long parceiroId, String qrCodeUnico, String emailAutenticado) {
-        Parceiro parceiro = carregarParceiroAutenticado(parceiroId, emailAutenticado);
+    private Cupom buscarCupomValidoDoParceiro(String emailAutenticado, String qrCodeUnico) {
+        Parceiro parceiro = carregarParceiroPorEmail(emailAutenticado);
 
         Cupom cupom = cupomRepository.findByQrCodeUnico(qrCodeUnico)
                 .orElseThrow(() -> new RecursoNaoEncontradoException("cupom inexistente"));
@@ -144,13 +147,13 @@ public class CupomService {
         expirarSeNecessario(cupom);
 
         if (!cupom.getParceiro().getId().equals(parceiro.getId())) {
-            throw new RegraNegocioException("cupom não pertence ao parceiro logado");
+            throw new RegraNegocioException("cupom não pertence ao parceiro logado", "CUPOM_DE_OUTRO_PARCEIRO");
         }
         if (cupom.getStatus() == StatusCupom.UTILIZADO) {
-            throw new RegraNegocioException("cupom já utilizado");
+            throw new RegraNegocioException("cupom já utilizado", "CUPOM_JA_UTILIZADO");
         }
         if (cupom.getStatus() == StatusCupom.EXPIRADO) {
-            throw new RegraNegocioException("cupom expirado");
+            throw new RegraNegocioException("cupom expirado", "CUPOM_EXPIRADO");
         }
 
         return cupom;

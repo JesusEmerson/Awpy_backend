@@ -19,4 +19,7 @@ public interface HistoricoPontosRepository extends JpaRepository<HistoricoPontos
             ORDER BY SUM(h.pontos) DESC
             """)
     List<RankingMensalProjection> rankingDesde(@Param("inicioDoMes") LocalDateTime inicioDoMes, Pageable pageable);
+
+    @Query("SELECT COALESCE(SUM(h.pontos), 0) FROM HistoricoPontos h")
+    Long somarTodosOsPontos();
 }

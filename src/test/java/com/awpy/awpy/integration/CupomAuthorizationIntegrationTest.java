@@ -14,15 +14,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Reproduz, em nível de HTTP real (controller + security + service), o cenário de
- * IDOR encontrado na revisão: um usuário/parceiro autenticado não pode operar
- * recursos de outro usuário/parceiro só porque sabe o id na URL. Esse teste existe
- * para travar essa regressão especificamente — é o bug mais sério já encontrado
- * no projeto.
- *
- * Os ids são capturados das respostas de cadastro (em vez de fixos em "1") porque
- * o gerador IDENTITY do H2 não é revertido pelo rollback do @Transactional entre
- * métodos de teste — cada teste pode receber ids diferentes.
+ * Os endpoints de cupom (usuário e parceiro) derivam a identidade só do token —
+ * não existe id de outra pessoa no path pra um cliente malicioso trocar (era assim
+ * antes; foi refatorado pra "/me" justamente pra eliminar essa classe de bug por
+ * construção). O que ainda precisa ser testado é a regra de pertencimento real:
+ * um parceiro não pode confirmar/cancelar/ver um cupom que pertence a OUTRO
+ * parceiro, mesmo sabendo o QR Code.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -36,67 +33,60 @@ class CupomAuthorizationIntegrationTest {
     private ObjectMapper objectMapper;
 
     @Test
-    void usuarioNaoPodeVerCupomAtivoDeOutroUsuario() throws Exception {
-        Long idA = cadastrarUsuario("a@teste.com");
+    void usuarioVeSomenteOProprioCupomAtivo() throws Exception {
+        cadastrarUsuario("a@teste.com");
         cadastrarUsuario("b@teste.com");
         String tokenB = loginUsuario("b@teste.com");
 
-        mockMvc.perform(get("/api/usuarios/{id}/cupons/ativo", idA)
+        // B nunca resgatou nada: deve dar 404, nunca ver o cupom de A
+        mockMvc.perform(get("/api/usuarios/me/cupons/ativo")
                         .header("Authorization", "Bearer " + tokenB))
-                .andExpect(status().isForbidden());
-    }
-
-    @Test
-    void usuarioNaoPodeResgatarCupomEmNomeDeOutroUsuario() throws Exception {
-        Long idA = cadastrarUsuario("a@teste.com");
-        cadastrarUsuario("b@teste.com");
-        String tokenB = loginUsuario("b@teste.com");
-
-        mockMvc.perform(post("/api/usuarios/{id}/cupons", idA)
-                        .header("Authorization", "Bearer " + tokenB)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"beneficioId\":1}"))
-                .andExpect(status().isForbidden());
-    }
-
-    @Test
-    void usuarioAcessandoOProprioRecursoNaoRecebeForbidden() throws Exception {
-        Long idA = cadastrarUsuario("a@teste.com");
-        String tokenA = loginUsuario("a@teste.com");
-
-        // sem cupom ativo cadastrado: deve dar 404 (recurso não encontrado), nunca 403
-        mockMvc.perform(get("/api/usuarios/{id}/cupons/ativo", idA)
-                        .header("Authorization", "Bearer " + tokenA))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void parceiroNaoPodeValidarCupomDeOutroParceiro() throws Exception {
+        Long idParceiroA = cadastrarParceiroComoAdmin("pa@teste.com");
+        cadastrarParceiroComoAdmin("pb@teste.com");
+        String tokenAdmin = loginAdmin();
+        Long idBeneficio = cadastrarBeneficio(tokenAdmin, idParceiroA);
+
+        cadastrarUsuario("comprador@teste.com");
+        creditarPontos(tokenAdmin, "comprador@teste.com", 1000L);
+        String tokenComprador = loginUsuario("comprador@teste.com");
+        String qrCode = resgatarCupom(tokenComprador, idBeneficio);
+
+        String tokenParceiroB = loginParceiro("pb@teste.com");
+
+        // RegraNegocioException -> 409, igual às outras regras de cupom (já
+        // utilizado/expirado) — não é um AccessDeniedException de autorização.
+        mockMvc.perform(get("/api/parceiros/me/cupons/{qr}", qrCode)
+                        .header("Authorization", "Bearer " + tokenParceiroB))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void parceiroDonoDoCupomConsegueValidarENaoRecebeForbidden() throws Exception {
+        Long idParceiroA = cadastrarParceiroComoAdmin("pa2@teste.com");
+        String tokenAdmin = loginAdmin();
+        Long idBeneficio = cadastrarBeneficio(tokenAdmin, idParceiroA);
+
+        cadastrarUsuario("comprador2@teste.com");
+        creditarPontos(tokenAdmin, "comprador2@teste.com", 1000L);
+        String tokenComprador = loginUsuario("comprador2@teste.com");
+        String qrCode = resgatarCupom(tokenComprador, idBeneficio);
+
+        String tokenParceiroA = loginParceiro("pa2@teste.com");
+
+        mockMvc.perform(get("/api/parceiros/me/cupons/{qr}", qrCode)
+                        .header("Authorization", "Bearer " + tokenParceiroA))
+                .andExpect(status().isOk());
     }
 
     @Test
     void requisicaoSemTokenRecebeUnauthorized() throws Exception {
         mockMvc.perform(get("/api/ranking"))
                 .andExpect(status().isUnauthorized());
-    }
-
-    @Test
-    void parceiroNaoPodeValidarCupomUsandoIdDeOutroParceiroAutenticadoComoEle() throws Exception {
-        Long idParceiroA = cadastrarParceiroComoAdmin("pa@teste.com");
-        cadastrarParceiroComoAdmin("pb@teste.com");
-        String tokenParceiroB = loginParceiro("pb@teste.com");
-
-        // pb se autentica, mas tenta usar o id que pertence ao parceiro pa
-        mockMvc.perform(get("/api/parceiros/{id}/cupons/qualquer-qr", idParceiroA)
-                        .header("Authorization", "Bearer " + tokenParceiroB))
-                .andExpect(status().isForbidden());
-    }
-
-    @Test
-    void parceiroAcessandoOProprioRecursoNaoRecebeForbidden() throws Exception {
-        Long idParceiroA = cadastrarParceiroComoAdmin("pa@teste.com");
-        String tokenParceiroA = loginParceiro("pa@teste.com");
-
-        // QR inexistente: deve dar 404, nunca 403
-        mockMvc.perform(get("/api/parceiros/{id}/cupons/qr-inexistente", idParceiroA)
-                        .header("Authorization", "Bearer " + tokenParceiroA))
-                .andExpect(status().isNotFound());
     }
 
     private Long cadastrarUsuario(String email) throws Exception {
@@ -117,11 +107,12 @@ class CupomAuthorizationIntegrationTest {
                 ).andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
 
-        return objectMapper.readTree(body).get("id").asLong();
+        return objectMapper.readTree(body).get("perfil").get("id").asLong();
     }
 
     private Long cadastrarParceiroComoAdmin(String email) throws Exception {
         String tokenAdmin = loginAdmin();
+        String cnpj = String.valueOf(System.nanoTime()).substring(0, 14);
 
         String body = mockMvc.perform(post("/api/parceiros")
                         .header("Authorization", "Bearer " + tokenAdmin)
@@ -129,30 +120,77 @@ class CupomAuthorizationIntegrationTest {
                         .content("""
                                 {
                                   "nomeEstabelecimento":"Parceiro Teste",
+                                  "cnpj":"%s",
                                   "email":"%s",
-                                  "senha":"senha1234"
+                                  "senha":"senha1234",
+                                  "telefone":"11999999999",
+                                  "endereco":"Rua A, 123"
                                 }
-                                """.formatted(email))
+                                """.formatted(cnpj, email))
                 ).andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
 
         return objectMapper.readTree(body).get("id").asLong();
     }
 
+    private Long cadastrarBeneficio(String tokenAdmin, Long parceiroId) throws Exception {
+        String body = mockMvc.perform(post("/api/beneficios")
+                        .header("Authorization", "Bearer " + tokenAdmin)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "nome":"Benefício Teste",
+                                  "descricao":"desc",
+                                  "custoEmPontos":100,
+                                  "parceiroId":%d
+                                }
+                                """.formatted(parceiroId))
+                ).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        return objectMapper.readTree(body).get("id").asLong();
+    }
+
+    private void creditarPontos(String tokenAdmin, String emailUsuario, Long pontos) throws Exception {
+        Long usuarioId = objectMapper.readTree(
+                mockMvc.perform(post("/api/auth/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"email\":\"%s\",\"senha\":\"senha1234\"}".formatted(emailUsuario)))
+                        .andReturn().getResponse().getContentAsString()
+        ).get("perfil").get("id").asLong();
+
+        mockMvc.perform(post("/api/usuarios/{id}/pontos", usuarioId)
+                        .header("Authorization", "Bearer " + tokenAdmin)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"pontos\":%d}".formatted(pontos)))
+                .andExpect(status().isOk());
+    }
+
+    private String resgatarCupom(String tokenUsuario, Long beneficioId) throws Exception {
+        String body = mockMvc.perform(post("/api/usuarios/me/cupons")
+                        .header("Authorization", "Bearer " + tokenUsuario)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"beneficioId\":%d}".formatted(beneficioId)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        return objectMapper.readTree(body).get("qrCodeUnico").asText();
+    }
+
     private String loginUsuario(String email) throws Exception {
-        return login("/api/usuarios/login", email, "senha1234");
+        return login(email, "senha1234");
     }
 
     private String loginParceiro(String email) throws Exception {
-        return login("/api/parceiros/login", email, "senha1234");
+        return login(email, "senha1234");
     }
 
     private String loginAdmin() throws Exception {
-        return login("/api/admins/login", "admin@awpy.com", "troque-esta-senha");
+        return login("admin@awpy.com", "troque-esta-senha");
     }
 
-    private String login(String url, String email, String senha) throws Exception {
-        String body = mockMvc.perform(post(url)
+    private String login(String email, String senha) throws Exception {
+        String body = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"%s\",\"senha\":\"%s\"}".formatted(email, senha))
                 ).andExpect(status().isOk())

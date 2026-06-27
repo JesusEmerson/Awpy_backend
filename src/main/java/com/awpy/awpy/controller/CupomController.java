@@ -9,14 +9,15 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @RestController
-@RequestMapping("/api/usuarios/{usuarioId}/cupons")
+@RequestMapping("/api/usuarios/me/cupons")
 @RequiredArgsConstructor
 public class CupomController {
 
@@ -24,15 +25,18 @@ public class CupomController {
 
     @PostMapping
     public ResponseEntity<CupomResponse> resgatar(
-            @PathVariable Long usuarioId,
-            @Valid @RequestBody CupomResgateRequest request,
-            Authentication authentication) {
-        CupomResponse response = cupomService.resgatar(usuarioId, request.beneficioId(), authentication.getName());
+            @Valid @RequestBody CupomResgateRequest request, Authentication authentication) {
+        CupomResponse response = cupomService.resgatar(authentication.getName(), request.beneficioId());
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
-    @GetMapping("/ativo")
-    public ResponseEntity<CupomResponse> buscarAtivo(@PathVariable Long usuarioId, Authentication authentication) {
-        return ResponseEntity.ok(cupomService.buscarCupomAtivo(usuarioId, authentication.getName()));
+    @GetMapping("/ativos")
+    public List<CupomResponse> buscarAtivos(Authentication authentication) {
+        return cupomService.buscarCuponsAtivos(authentication.getName());
+    }
+
+    @GetMapping
+    public List<CupomResponse> listarTodos(Authentication authentication) {
+        return cupomService.listarTodos(authentication.getName());
     }
 }

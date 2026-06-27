@@ -21,8 +21,16 @@ public class BeneficioService {
     private final BeneficioRepository beneficioRepository;
     private final ParceiroRepository parceiroRepository;
 
+    /** Usado pelo fluxo de resgate do usuário comum — só o que ele pode efetivamente trocar. */
     public List<BeneficioResponse> listarAtivos() {
         return beneficioRepository.findByAtivoTrue().stream()
+                .map(BeneficioResponse::fromEntity)
+                .toList();
+    }
+
+    /** Usado pela tela de gestão do admin/funcionário — precisa ver inativos pra poder reativar. */
+    public List<BeneficioResponse> listarTodos() {
+        return beneficioRepository.findAll().stream()
                 .map(BeneficioResponse::fromEntity)
                 .toList();
     }

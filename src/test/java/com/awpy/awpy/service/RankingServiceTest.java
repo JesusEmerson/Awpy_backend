@@ -49,6 +49,28 @@ class RankingServiceTest {
         assertThat(rankingService.topCinco()).isEmpty();
     }
 
+    @Test
+    void minhaPosicaoEncontraUsuarioNoMeioDaLista() {
+        RankingMensalProjection primeiro = projecao(1L, "Usuario A", 300L);
+        RankingMensalProjection segundo = projecao(2L, "Usuario B", 200L);
+        RankingMensalProjection terceiro = projecao(3L, "Usuario C", 100L);
+
+        when(historicoPontosRepository.rankingDesde(any(), any(Pageable.class)))
+                .thenReturn(List.of(primeiro, segundo, terceiro));
+
+        assertThat(rankingService.minhaPosicao(2L)).isEqualTo(2);
+    }
+
+    @Test
+    void minhaPosicaoRetornaNullSeUsuarioNaoPontuouNoMes() {
+        RankingMensalProjection primeiro = projecao(1L, "Usuario A", 300L);
+
+        when(historicoPontosRepository.rankingDesde(any(), any(Pageable.class)))
+                .thenReturn(List.of(primeiro));
+
+        assertThat(rankingService.minhaPosicao(99L)).isNull();
+    }
+
     private RankingMensalProjection projecao(Long usuarioId, String nome, Long total) {
         return new RankingMensalProjection() {
             @Override

@@ -1,23 +1,24 @@
 package com.awpy.awpy.security;
 
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 
 /**
- * Os três logins (usuário/parceiro/admin) compartilham o mesmo AuthenticationManager
- * (ver SecurityConfig) — ele tenta autenticar contra os três UserDetailsService até
- * um aceitar. Isso significa que, em tese, um e-mail/senha que bate por coincidência
- * num cadastro de OUTRO perfil também passaria. Por isso cada controller de login
- * confere, depois de autenticar, que o papel retornado é realmente o esperado para
- * aquele endpoint antes de emitir o token.
+ * O login é único (POST /api/auth/login): o AuthenticationManager tenta autenticar
+ * contra usuário, parceiro e admin/funcionário, nessa ordem, até um aceitar (ver
+ * SecurityConfig). Essa classe extrai qual papel realmente autenticou, pra
+ * AuthController saber qual repositório consultar e qual claim "role" colocar no JWT.
  */
 public final class AuthorityUtils {
 
     private AuthorityUtils() {
     }
 
-    public static boolean temPapel(Authentication authentication, String role) {
-        String authority = "ROLE_" + role;
+    public static String extrairPapel(Authentication authentication) {
         return authentication.getAuthorities().stream()
-                .anyMatch(concedida -> concedida.getAuthority().equals(authority));
+                .findFirst()
+                .map(GrantedAuthority::getAuthority)
+                .map(authority -> authority.replaceFirst("^ROLE_", ""))
+                .orElseThrow(() -> new IllegalStateException("autenticação sem papel definido"));
     }
 }

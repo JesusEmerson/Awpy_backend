@@ -2,8 +2,10 @@ package com.awpy.awpy.service;
 
 import com.awpy.awpy.dto.ranking.RankingResponse;
 import com.awpy.awpy.repository.HistoricoPontosRepository;
+import com.awpy.awpy.repository.RankingMensalProjection;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -26,9 +28,7 @@ public class RankingService {
     private final HistoricoPontosRepository historicoPontosRepository;
 
     public List<RankingResponse> topCinco() {
-        LocalDateTime inicioDoMes = LocalDate.now().withDayOfMonth(1).atStartOfDay();
-
-        var projecoes = historicoPontosRepository.rankingDesde(inicioDoMes, PageRequest.of(0, TOP));
+        var projecoes = historicoPontosRepository.rankingDesde(inicioDoMes(), PageRequest.of(0, TOP));
 
         List<RankingResponse> ranking = new ArrayList<>();
         for (int i = 0; i < projecoes.size(); i++) {
@@ -36,5 +36,27 @@ public class RankingService {
         }
 
         return ranking;
+    }
+
+    /**
+     * Posição do usuário no ranking mensal completo (não só o Top 5). Retorna null
+     * se o usuário não pontuou nada esse mês — ele simplesmente não aparece na lista
+     * (não dá pra "ser 47º de 12 pessoas que pontuaram").
+     */
+    public Integer minhaPosicao(Long usuarioId) {
+        Pageable semLimite = PageRequest.of(0, Integer.MAX_VALUE);
+        List<RankingMensalProjection> rankingCompleto = historicoPontosRepository.rankingDesde(inicioDoMes(), semLimite);
+
+        for (int i = 0; i < rankingCompleto.size(); i++) {
+            if (rankingCompleto.get(i).getUsuarioId().equals(usuarioId)) {
+                return i + 1;
+            }
+        }
+
+        return null;
+    }
+
+    private LocalDateTime inicioDoMes() {
+        return LocalDate.now().withDayOfMonth(1).atStartOfDay();
     }
 }

@@ -40,9 +40,11 @@ class ParceiroServiceTest {
     @Test
     void cadastraComSucesso() {
         ParceiroCadastroRequest request = new ParceiroCadastroRequest(
-                "Parceiro Teste", "parceiro@teste.com", "senha1234", 10.0, 5.0);
+                "Parceiro Teste", "11222333000181", "parceiro@teste.com", "senha1234",
+                "11999999999", "Rua A, 123", 10.0, 5.0);
 
         when(parceiroRepository.existsByEmail("parceiro@teste.com")).thenReturn(false);
+        when(parceiroRepository.existsByCnpj("11222333000181")).thenReturn(false);
         when(passwordEncoder.encode("senha1234")).thenReturn("hash");
         when(parceiroRepository.save(any(Parceiro.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -54,9 +56,25 @@ class ParceiroServiceTest {
     @Test
     void falhaQuandoEmailJaCadastrado() {
         ParceiroCadastroRequest request = new ParceiroCadastroRequest(
-                "Parceiro Teste", "parceiro@teste.com", "senha1234", null, null);
+                "Parceiro Teste", "11222333000181", "parceiro@teste.com", "senha1234",
+                "11999999999", "Rua A, 123", null, null);
 
         when(parceiroRepository.existsByEmail("parceiro@teste.com")).thenReturn(true);
+
+        assertThatThrownBy(() -> parceiroService.cadastrar(request))
+                .isInstanceOf(RegraNegocioException.class);
+
+        verify(parceiroRepository, never()).save(any());
+    }
+
+    @Test
+    void falhaQuandoCnpjJaCadastrado() {
+        ParceiroCadastroRequest request = new ParceiroCadastroRequest(
+                "Parceiro Teste", "11222333000181", "parceiro@teste.com", "senha1234",
+                "11999999999", "Rua A, 123", null, null);
+
+        when(parceiroRepository.existsByEmail("parceiro@teste.com")).thenReturn(false);
+        when(parceiroRepository.existsByCnpj("11222333000181")).thenReturn(true);
 
         assertThatThrownBy(() -> parceiroService.cadastrar(request))
                 .isInstanceOf(RegraNegocioException.class);

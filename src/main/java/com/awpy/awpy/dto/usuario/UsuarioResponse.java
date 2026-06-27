@@ -7,7 +7,8 @@ public record UsuarioResponse(
         String nomeCompleto,
         String email,
         Long saldoPontos,
-        String fotoUrl
+        String fotoUrl,
+        String qrCodeUsuario
 ) {
     public static UsuarioResponse fromEntity(Usuario usuario) {
         return new UsuarioResponse(
@@ -15,7 +16,8 @@ public record UsuarioResponse(
                 usuario.getNomeCompleto(),
                 usuario.getEmail(),
                 usuario.getSaldoPontos(),
-                usuario.getFotoUrl()
+                usuario.getFotoUrl(),
+                usuario.getQrCodeUsuario()
         );
     }
 }

@@ -10,4 +10,6 @@ public interface ParceiroRepository extends JpaRepository<Parceiro, Long> {
     Optional<Parceiro> findByEmail(String email);
 
     boolean existsByEmail(String email);
+
+    boolean existsByCnpj(String cnpj);
 }
